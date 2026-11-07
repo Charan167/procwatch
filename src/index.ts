@@ -14,8 +14,22 @@ try{
   }
 }
 catch (error) {
-  console.error("Error occurred while processing the PID:", error);
-}
+  if(error instanceof Error && "code" in error){
+
+    if(error.code === "ENOENT") {
+      console.error(`No process found with PID ${arg4}. Please ensure the PID is correct and the process is running.`);
+    }
+    else if(error.code === "EACCES") {
+      console.error(`Permission denied while trying to access process with PID ${arg4}. Please run the script with appropriate permissions.`);
+    }
+    else {
+      console.error("An unexpected error occurred:", error);
+    }
+  }
+  else{
+    console.error("An unexpected error occurred:", error);
+  }
+  }
 
 
 
