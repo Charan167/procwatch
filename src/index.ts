@@ -29,6 +29,7 @@ catch (error) {
   else{
     console.error("An unexpected error occurred:", error);
   }
+  process.exit(1);
   }
 
 
