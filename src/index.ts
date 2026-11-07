@@ -1,12 +1,46 @@
 import { argv } from "node:process";
+import { readFile } from "node:fs/promises";
 
 const [, , arg3, arg4] = argv;
 
 console.log("Arguments passed to the script:", arg3, arg4);
 
+try{
+  if(arg3 && arg4) {
+  await pidProcessor(arg3, arg4);
+  }
+  else {
+    console.error("Insufficient arguments. Usage: node index.js --pid <process_id>");
+  }
+}
+catch (error) {
+  console.error("Error occurred while processing the PID:", error);
+}
+
+
+
+async function pidProcessor(arg3: string, arg4: string) {
+
 if(arg3 === "--pid" && Number(arg4)) {
   const pid = Number(arg4);
   console.log(`Monitoring process with PID: ${pid}`);
+
+  const processInfo = await readFile(`/proc/${pid}/status`, "utf-8");
+  // console.log(`Process Info for PID ${pid}:\n${processInfo}`); 
+
+ const {Name, State, VmSize, VmRSS, Pid} = Object.fromEntries(
+    processInfo.split("\n")
+      .filter(line => line.includes(":"))
+      .map(line => line.split(":").map(s => s.trim()))
+  );
+
+  console.log(`Name: ${Name}`);
+  console.log(`State: ${State}`);
+  console.log(`Virtual Memory Size: ${VmSize}`);
+  // console.log(`Resident Set Size: ${VmRSS}`);
+  console.log(`PID: ${Pid}`);
+
 } else {
   console.error("Invalid arguments. Usage: node index.js --pid <process_id>");
+}
 }
