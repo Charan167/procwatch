@@ -36,3 +36,16 @@ async function readTotalTicks(): Promise<number | undefined> {
         throw error;
     }
 }
+
+function cpuPercentage(a : { proc : number, total : number},b: { proc : number, total : number}): number {
+
+    const procDiff = b.proc - a.proc;
+    const totalDiff = b.total - a.total;
+
+    if (totalDiff === 0) {
+        return 0;
+    }
+
+    return (procDiff / totalDiff) * 100;
+
+}
