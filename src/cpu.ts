@@ -1,13 +1,12 @@
 import { readFile } from "node:fs/promises";
 
 
-async function readProcTicks(pid: number): Promise<number | undefined> {
+export async function readProcTicks(pid: number): Promise<number> {
 
     const statFilePath = `/proc/${pid}/stat`;
 
     try {
         const procStatContent = await readFile(statFilePath, { encoding: "utf-8" });
-        console.log(procStatContent);
 
         const remaining = procStatContent.slice(procStatContent.lastIndexOf(")") + 1).trim();
         return Number(remaining.split(" ")?.[11]) + Number(remaining.split(" ")?.[12]);
@@ -18,18 +17,17 @@ async function readProcTicks(pid: number): Promise<number | undefined> {
     }
 }
 
-async function readTotalTicks(): Promise<number | undefined> {
+export async function readTotalTicks(): Promise<number> {
     const statFilePath = `/proc/stat`;
 
     try {
         const procStatContent = await readFile(statFilePath, { encoding: "utf-8" });
-        console.log(procStatContent);
 
         const cpuLine = procStatContent.split("\n").find(line => line.startsWith("cpu "));
         if (!cpuLine) {
             throw new Error("CPU line not found in /proc/stat");
         }
-        const cpuValues = cpuLine.slice(4).trim().split(" ").map(Number);
+        const cpuValues = cpuLine.slice(4).trim().split(/\s+/).slice(0, 8).map(Number);
         return cpuValues.reduce((sum, value) => sum + value, 0);
     } catch (error) {
         console.error(`Error reading ${statFilePath}:`, error);
@@ -37,7 +35,7 @@ async function readTotalTicks(): Promise<number | undefined> {
     }
 }
 
-function cpuPercentage(a : { proc : number, total : number},b: { proc : number, total : number}): number {
+export function cpuPercent(a : { proc : number, total : number},b: { proc : number, total : number}): number {
 
     const procDiff = b.proc - a.proc;
     const totalDiff = b.total - a.total;

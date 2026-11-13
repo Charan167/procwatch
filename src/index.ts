@@ -1,5 +1,6 @@
 import { argv } from "node:process";
 import { readFile } from "node:fs/promises";
+import { readProcTicks, readTotalTicks, cpuPercent } from "./cpu.js";
 
 const [, , arg3, arg4] = argv;
 
@@ -54,6 +55,22 @@ if(arg3 === "--pid" && Number(arg4)) {
   console.log(`Virtual Memory Size: ${VmSize}`);
   // console.log(`Resident Set Size: ${VmRSS}`);
   console.log(`PID: ${Pid}`);
+
+  const a = {
+    proc: await readProcTicks(pid),
+    total: await readTotalTicks(),
+  };
+
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  const b = {
+    proc: await readProcTicks(pid),
+    total: await readTotalTicks(),
+  };
+
+  console.log(a, b, "proc details")
+
+  console.log(`CPU: ${cpuPercent(a, b).toFixed(1)}%`);
 
 } else {
   console.error("Invalid arguments. Usage: node index.js --pid <process_id>");
