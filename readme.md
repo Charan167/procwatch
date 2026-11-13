@@ -2,8 +2,8 @@
 
 Inspect a Linux process from your terminal and learn how Linux reports process and CPU statistics.
 
-The current CLI reads one process once and prints its name, state, virtual memory size, and process ID (PID).
-CPU-reading helpers are in progress; the CLI does **not** display CPU percentages or refresh periodically yet.
+The CLI prints one process's name, state, virtual memory size, and process ID (PID).
+It then takes two CPU samples about one second apart, prints the average CPU percentage, and exits.
 
 ## Requirements
 
@@ -45,9 +45,12 @@ Name: bash
 State: S (sleeping)
 Virtual Memory Size: 8000 kB
 PID: 1234
+{ proc: 200, total: 10000 } { proc: 200, total: 11200 } proc details
+CPU: 0.0%
 ```
 
-The values depend on your process. Despite the word “Monitoring,” the current command takes one snapshot and exits.
+The values depend on your process and machine. The `proc details` line shows the two raw CPU samples.
+Despite the word “Monitoring,” the command measures one interval and exits; it does not refresh continuously.
 
 ## Usage and development
 
@@ -72,6 +75,7 @@ The only implemented CLI option is `--pid <PID>`; there is no sampling interval 
 | State | Its current state, such as `R` for running or `S` for sleeping. |
 | Virtual Memory Size | Its virtual address space (`VmSize`), not the amount of physical RAM it occupies. |
 | PID | The number Linux uses to identify this process. |
+| CPU | Average share of total CPU capacity across all logical CPUs during the sampling interval, rounded to one decimal place. |
 
 The source also reads `VmRSS`, which estimates resident memory, but does not currently print it.
 See the [Linux process status reference](https://www.man7.org/linux/man-pages/man5/proc_pid_status.5.html) for the underlying fields.
@@ -97,15 +101,15 @@ Running `cat /proc/stat` prints those contents; it does not start CPU measuremen
 | Path | Contents | Role in this project |
 | --- | --- | --- |
 | `/proc/<PID>/status` | Labelled process details. | Used by the working CLI. |
-| `/proc/<PID>/stat` | Positional process statistics, including CPU time. | Used by the unfinished process CPU helper. |
-| `/proc/stat` | System statistics, including CPU time across the machine. | Used by the unfinished total CPU helper. |
+| `/proc/<PID>/stat` | Positional process statistics, including CPU time. | Used by `readProcTicks()` for both CPU samples. |
+| `/proc/stat` | System statistics, including CPU time across the machine. | Used by `readTotalTicks()` for both CPU samples. |
 
 Replace `<PID>` with a process ID when reading a process-specific file.
 The [kernel's procfs documentation](https://www.kernel.org/doc/html/latest/filesystems/proc.html) explains this interface in more detail.
 
 ## How CPU measurement works
 
-This section explains the intended calculation. It is **not yet connected to the CLI**.
+The CLI uses the following calculation to measure CPU usage over an interval of about one second.
 
 ### 1. Read the process's accumulated CPU time
 
@@ -142,15 +146,11 @@ cpu  13571 0 5644 491240 1180 0 1117 0 0 0
 | 9 | `guest` | Running guest virtual CPUs. |
 | 10 | `guest_nice` | Running lower-priority guest virtual CPUs. |
 
-These values use `USER_HZ` ticks, usually 100 per second. Check your system with:
-
-```bash
-getconf CLK_TCK
-```
+These values use `USER_HZ` clock ticks.
 
 `iowait` is approximate and can sometimes decrease. See the [system stat manual](https://www.man7.org/linux/man-pages/man5/proc_stat.5.html).
 
-The intended total includes the first eight values, including idle time:
+`readTotalTicks()` sums the first eight values, including idle time:
 
 ```text
 total ticks = user + nice + system + idle + iowait + irq + softirq + steal
@@ -160,9 +160,7 @@ total ticks = user + nice + system + idle + iowait + irq + softirq + steal
 `guest` is already included in `user`, and `guest_nice` in `nice`.
 Adding them again would double-count guest time; see `account_guest_time` in the [kernel's CPU accounting source](https://github.com/torvalds/linux/blob/master/kernel/sched/cputime.c).
 
-**Current limitation:** `readTotalTicks()` adds all numeric fields instead of only the first eight.
-It can therefore double-count guest time when the guest fields are nonzero.
-Both CPU helpers are currently unexported, print raw input, and are unused by the CLI.
+Both CPU readers are exported and used by the CLI.
 
 ### 3. Compare two samples
 
@@ -182,6 +180,9 @@ total delta   = b.total - a.total
 CPU percentage = process delta / total delta × 100
 ```
 
+Both counters use clock ticks (usually 100 per second; see `getconf CLK_TCK`).
+The units cancel; CPU% is a share of total capacity across all logical CPUs.
+
 This is the ordinary percentage formula: part divided by whole, multiplied by 100.
 The part is CPU time used by the process. The whole is CPU time available across all logical CPUs, including idle time.
 
@@ -197,11 +198,10 @@ CPU percentage = 100 / 1200 × 100 ≈ 8.33%
 ```
 
 The process used about 8.33% of the machine's total CPU time **during that interval**.
-This is average usage, not an increase in CPU percentage. Tick units cancel, so no conversion to seconds is needed.
+This is average usage, not an increase in CPU percentage.
 
-The intended `cpuPercent(a, b)` contract returns `0` when the total delta is zero to avoid division by zero.
+`cpuPercent(a, b)` returns `0` when the total delta is zero to avoid division by zero.
 That fallback means no usable interval was measured; it does not prove the process used no CPU.
-This pure calculation function has not been implemented yet.
 
 ### Why not divide one sample's counters?
 
@@ -251,12 +251,12 @@ These notes describe the current implementation and its tradeoffs, rather than a
 | Choice | Practical consequence |
 | --- | --- |
 | Read Linux procfs directly using Node's built-in filesystem API. | The program uses asynchronous reads without a runtime monitoring library, but requires Linux. |
-| Inspect one PID in one pass. | The CLI stays small; output describes one snapshot, not a continuous stream. |
+| Inspect one PID over one sampling interval. | The CLI reports process details and interval CPU usage, then exits. |
 | Write strict TypeScript and compile to ESM JavaScript. | Types are checked during development; `npm start` runs the generated files in `dist/`. |
-| Keep CPU readers in a separate module. | CPU collection has its own source file, although it is not wired into the CLI yet. |
+| Keep CPU readers in a separate module. | The CLI uses exported helpers for CPU collection and percentage calculation. |
 | Report virtual memory explicitly as virtual memory. | Readers can distinguish address space from physical RAM consumption. |
 
-The intended CPU design separates filesystem reads from the arithmetic in `cpuPercent(a, b)`.
+The CPU design separates filesystem reads from the arithmetic in `cpuPercent(a, b)`.
 A pure function only uses its inputs, changes nothing outside itself, and returns the same result for the same inputs.
 That makes the percentage calculation easy to check with fixed sample values without reading live `/proc` files.
 
@@ -288,8 +288,8 @@ That makes the percentage calculation easy to check with fixed sample values wit
 ## Project layout
 
 ```text
-src/index.ts   CLI arguments, process status read, and text output
-src/cpu.ts     CPU-reading helpers, currently unused
+src/index.ts   CLI arguments, process status read, CPU sampling, and text output
+src/cpu.ts     CPU-reading helpers and pure percentage calculation
 dist/          Generated build output
 ```
 
