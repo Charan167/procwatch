@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import { readProcTicks, readTotalTicks, cpuPercent } from "./cpu.js";
+import { formatBytes } from "./memory.js";
 
 const usage = "Usage: node dist/index.js --pid <process_id> [--interval <milliseconds>]";
 let pid: number | undefined;
@@ -60,8 +61,8 @@ async function pidProcessor(pid: number, interval: number) {
 
   console.log(`Name: ${Name}`);
   console.log(`State: ${State}`);
-  console.log(`Virtual Memory Size: ${VmSize}`);
-  console.log(`Resident Set Size: ${VmRSS}`);
+console.log(`Virtual Memory Size: ${formatBytes(parseInt(VmSize, 10) * 1024)}`);
+console.log(`Resident Set Size: ${formatBytes(parseInt(VmRSS, 10) * 1024)}`);
   console.log(`PID: ${Pid}`);
 
   const a = {
