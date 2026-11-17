@@ -1,27 +1,40 @@
-import { argv } from "node:process";
+import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import { readProcTicks, readTotalTicks, cpuPercent } from "./cpu.js";
 
-const [, , arg3, arg4] = argv;
+const usage = "Usage: node dist/index.js --pid <process_id> [--interval <milliseconds>]";
+let pid: number | undefined;
 
-console.log("Arguments passed to the script:", arg3, arg4);
+try {
+  const { values } = parseArgs({
+    options: {
+      pid: { type: "string" },
+      interval: { type: "string", default: "1000" },
+    },
+  });
 
-try{
-  if(arg3 && arg4) {
-  await pidProcessor(arg3, arg4);
+  pid = Number(values.pid);
+  const interval = Number(values.interval);
+
+  if (!Number.isSafeInteger(pid) || pid <= 0 ||
+      !Number.isSafeInteger(interval) || interval <= 0 || interval > 2_147_483_647) {
+    console.error(usage);
+    process.exit(1);
   }
-  else {
-    console.error("Insufficient arguments. Usage: node index.js --pid <process_id>");
-  }
+
+  await pidProcessor(pid, interval);
 }
 catch (error) {
   if(error instanceof Error && "code" in error){
 
-    if(error.code === "ENOENT") {
-      console.error(`No process found with PID ${arg4}. Please ensure the PID is correct and the process is running.`);
+    if(typeof error.code === "string" && error.code.startsWith("ERR_PARSE_ARGS_")) {
+      console.error(usage);
+    }
+    else if(error.code === "ENOENT") {
+      console.error(`No process found with PID ${pid}. Please ensure the PID is correct and the process is running.`);
     }
     else if(error.code === "EACCES") {
-      console.error(`Permission denied while trying to access process with PID ${arg4}. Please run the script with appropriate permissions.`);
+      console.error(`Permission denied while trying to access process with PID ${pid}. Please run the script with appropriate permissions.`);
     }
     else {
       console.error("An unexpected error occurred:", error);
@@ -31,14 +44,9 @@ catch (error) {
     console.error("An unexpected error occurred:", error);
   }
   process.exit(1);
-  }
+}
 
-
-
-async function pidProcessor(arg3: string, arg4: string) {
-
-if(arg3 === "--pid" && Number(arg4)) {
-  const pid = Number(arg4);
+async function pidProcessor(pid: number, interval: number) {
   console.log(`Monitoring process with PID: ${pid}`);
 
   const processInfo = await readFile(`/proc/${pid}/status`, "utf-8");
@@ -53,7 +61,7 @@ if(arg3 === "--pid" && Number(arg4)) {
   console.log(`Name: ${Name}`);
   console.log(`State: ${State}`);
   console.log(`Virtual Memory Size: ${VmSize}`);
-  // console.log(`Resident Set Size: ${VmRSS}`);
+  console.log(`Resident Set Size: ${VmRSS}`);
   console.log(`PID: ${Pid}`);
 
   const a = {
@@ -61,7 +69,7 @@ if(arg3 === "--pid" && Number(arg4)) {
     total: await readTotalTicks(),
   };
 
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  await new Promise(resolve => setTimeout(resolve, interval));
 
   const b = {
     proc: await readProcTicks(pid),
@@ -72,7 +80,4 @@ if(arg3 === "--pid" && Number(arg4)) {
 
   console.log(`CPU: ${cpuPercent(a, b).toFixed(1)}%`);
 
-} else {
-  console.error("Invalid arguments. Usage: node index.js --pid <process_id>");
-}
 }
