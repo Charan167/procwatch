@@ -2,14 +2,15 @@
 
 Inspect a Linux process from your terminal and learn how Linux reports process and CPU statistics.
 
-The CLI prints one process's name, state, virtual memory size, and process ID (PID).
-It then takes two CPU samples about one second apart, prints the average CPU percentage, and exits.
+The CLI prints one process's name, state, virtual and resident memory sizes, and process ID (PID).
+It then takes two CPU samples about one second apart, prints the average CPU percentage and process uptime, and exits.
 
 ## Requirements
 
 - Linux with `/proc` available. On Windows, run the project inside a Linux environment such as WSL.
 - Node.js and npm. Node.js 22.22.2 and npm 10.9.7 were used to verify the commands below.
 - A running process whose details your user can read.
+- `getconf` available on `PATH` to read the system's clock-tick rate with `getconf CLK_TCK`.
 
 Node.js 22 is the recommended baseline. The project does not currently declare a minimum Node.js version.
 Native Windows and macOS do not provide the Linux `/proc` files this program reads.
@@ -39,14 +40,15 @@ Replace `1234` with a running process's PID. Run `ps -u "$USER"` to list your pr
 An illustrative output looks like this, after npm's script messages:
 
 ```text
-Arguments passed to the script: --pid 1234
 Monitoring process with PID: 1234
 Name: bash
 State: S (sleeping)
-Virtual Memory Size: 8000 kB
+Virtual Memory Size: 7.81 MiB
+Resident Set Size: 3.00 MiB
 PID: 1234
 { proc: 200, total: 10000 } { proc: 200, total: 11200 } proc details
 CPU: 0.0%
+Uptime: 120.5 s
 ```
 
 The values depend on your process and machine. The `proc details` line shows the two raw CPU samples.
@@ -63,7 +65,7 @@ Despite the word “Monitoring,” the command measures one interval and exits; 
 
 Rebuild after changing the source if you use `npm start`.
 Development mode watches **source files**, not changes in the inspected process. Press `Ctrl+C` to stop it.
-The only implemented CLI option is `--pid <PID>`; there is no sampling interval option.
+Use `--pid <PID>` to select a process and optionally `--interval <milliseconds>` to change the sampling interval (default: `1000`).
 
 `npm test` is currently a placeholder that exits with an error. There is no automated test suite yet.
 
@@ -74,10 +76,11 @@ The only implemented CLI option is `--pid <PID>`; there is no sampling interval 
 | Name | The process name reported by Linux. |
 | State | Its current state, such as `R` for running or `S` for sleeping. |
 | Virtual Memory Size | Its virtual address space (`VmSize`), not the amount of physical RAM it occupies. |
+| Resident Set Size | Its approximate resident memory (`VmRSS`). |
 | PID | The number Linux uses to identify this process. |
 | CPU | Average share of total CPU capacity across all logical CPUs during the sampling interval, rounded to one decimal place. |
+| Uptime | Elapsed time since the process started, in seconds, rounded to one decimal place. |
 
-The source also reads `VmRSS`, which estimates resident memory, but does not currently print it.
 See the [Linux process status reference](https://www.man7.org/linux/man-pages/man5/proc_pid_status.5.html) for the underlying fields.
 
 ### Troubleshooting
@@ -89,9 +92,10 @@ See the [Linux process status reference](https://www.man7.org/linux/man-pages/ma
 | “No process found” | Check the PID with `ps`. A process may exit before the program reads its details. |
 | “Permission denied” | Try a process owned by your user; system settings can restrict access to other processes. |
 | `/proc` is unavailable | Run inside Linux with procfs mounted. |
+| Unable to read clock tick rate | Ensure `getconf CLK_TCK` succeeds and `getconf` is on `PATH`. |
 | Output does not change after editing code | Rebuild, or use `npm run dev -- --pid 1234`. |
 
-Read failures exit with status 1. Missing or invalid arguments currently print a message without setting a failing exit status.
+Read failures, invalid uptime values, and missing or invalid arguments exit with status 1.
 
 ## Where the data comes from
 
@@ -101,8 +105,9 @@ Running `cat /proc/stat` prints those contents; it does not start CPU measuremen
 | Path | Contents | Role in this project |
 | --- | --- | --- |
 | `/proc/<PID>/status` | Labelled process details. | Used by the working CLI. |
-| `/proc/<PID>/stat` | Positional process statistics, including CPU time. | Used by `readProcTicks()` for both CPU samples. |
+| `/proc/<PID>/stat` | Positional process statistics, including CPU time and start time. | Used by `readProcTicks()` for CPU samples and `getProcessUptime()` for field 22. |
 | `/proc/stat` | System statistics, including CPU time across the machine. | Used by `readTotalTicks()` for both CPU samples. |
+| `/proc/uptime` | System uptime and accumulated idle time, in seconds. | `bootTime()` reads the first number for the process uptime calculation. |
 
 Replace `<PID>` with a process ID when reading a process-specific file.
 The [kernel's procfs documentation](https://www.kernel.org/doc/html/latest/filesystems/proc.html) explains this interface in more detail.
@@ -244,6 +249,23 @@ It measures accounted time, not a guarantee that all logical CPUs deliver equal 
 The `softirq` CPU column measures **time**; the separate `softirq` line counts **events**.
 See the [kernel's system statistics reference](https://www.kernel.org/doc/html/latest/filesystems/proc.html#miscellaneous-kernel-statistics-in-proc-stat).
 
+## How process uptime works
+
+`getProcessUptime(pid)` calculates the elapsed seconds since the process started:
+
+```text
+uptimeSec = bootSec - starttime / ticksPerSecond
+```
+
+`bootSec` is the first number in `/proc/uptime`, including time spent suspended.
+`starttime` is field 22 of `/proc/<PID>/stat`, measured in clock ticks since boot.
+After skipping through the last `)` and splitting on whitespace, this field is at zero-based index `19`.
+The clock-tick rate comes from `getconf CLK_TCK`; when it is `100`, the formula becomes `bootSec - starttime / 100`.
+
+For example, `bootSec = 1000` and `starttime = 25000` at `100` ticks per second give an uptime of `750` seconds.
+Missing or invalid numeric values produce an error instead of printing `NaN`.
+See the [system uptime reference](https://man7.org/linux/man-pages/man5/proc_uptime.5.html) and [process stat reference, field 22](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html).
+
 ## Design decisions
 
 These notes describe the current implementation and its tradeoffs, rather than a complete architecture history.
@@ -289,7 +311,8 @@ That makes the percentage calculation easy to check with fixed sample values wit
 
 ```text
 src/index.ts   CLI arguments, process status read, CPU sampling, and text output
-src/cpu.ts     CPU-reading helpers and pure percentage calculation
+src/cpu.ts     CPU-reading helpers, system uptime reader, and percentage calculation
+src/process.ts Process uptime calculation using procfs and the system clock-tick rate
 dist/          Generated build output
 ```
 

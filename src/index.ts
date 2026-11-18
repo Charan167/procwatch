@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import { readProcTicks, readTotalTicks, cpuPercent } from "./cpu.js";
 import { formatBytes } from "./memory.js";
+import { getProcessUptime } from "./process.js";
 
 const usage = "Usage: node dist/index.js --pid <process_id> [--interval <milliseconds>]";
 let pid: number | undefined;
@@ -80,5 +81,6 @@ console.log(`Resident Set Size: ${formatBytes(parseInt(VmRSS, 10) * 1024)}`);
   console.log(a, b, "proc details")
 
   console.log(`CPU: ${cpuPercent(a, b).toFixed(1)}%`);
+  console.log(`Uptime: ${(await getProcessUptime(pid)).toFixed(1)} s`);
 
 }

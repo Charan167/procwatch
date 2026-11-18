@@ -47,3 +47,20 @@ export function cpuPercent(a : { proc : number, total : number},b: { proc : numb
     return (procDiff / totalDiff) * 100;
 
 }
+
+export async function bootTime(): Promise<number> {
+    const statFilePath = `/proc/uptime`;
+
+    try {
+        const bootStatContent = await readFile(statFilePath, { encoding: "utf-8" });
+        const value = bootStatContent.trim().split(/\s+/)[0];
+        const bootSec = Number(value);
+        if (!value || !Number.isFinite(bootSec) || bootSec < 0) {
+            throw new Error(`Invalid system uptime in ${statFilePath}`);
+        }
+        return bootSec;
+    } catch (error) {
+        console.error(`Error reading ${statFilePath}:`, error);
+        throw error;
+    }
+}
