@@ -2,8 +2,8 @@
 
 Inspect a Linux process from your terminal and learn how Linux reports process and CPU statistics.
 
-The CLI prints one process's name, state, virtual and resident memory sizes, and process ID (PID).
-It then takes two CPU samples about one second apart, prints the average CPU percentage and process uptime, and exits.
+The CLI prints one line with a process's name, state, memory sizes, PID, CPU usage, and uptime.
+It refreshes these values continuously, sleeping about one second between samples by default. Press `Ctrl+C` to stop.
 
 ## Requirements
 
@@ -40,19 +40,12 @@ Replace `1234` with a running process's PID. Run `ps -u "$USER"` to list your pr
 An illustrative output looks like this, after npm's script messages:
 
 ```text
-Monitoring process with PID: 1234
-Name: bash
-State: S (sleeping)
-Virtual Memory Size: 7.81 MiB
-Resident Set Size: 3.00 MiB
-PID: 1234
-{ proc: 200, total: 10000 } { proc: 200, total: 11200 } proc details
-CPU: 0.0%
-Uptime: 120.5 s
+PID: 1234 | Name: bash | State: S (sleeping) | Virtual Memory Size: 7.81 MiB | Resident Set Size: 3.00 MiB | CPU: N/A | Uptime: 120.5 s
+PID: 1234 | Name: bash | State: S (sleeping) | Virtual Memory Size: 7.81 MiB | Resident Set Size: 3.00 MiB | CPU: 0.0% | Uptime: 121.5 s
 ```
 
-The values depend on your process and machine. The `proc details` line shows the two raw CPU samples.
-Despite the word “Monitoring,” the command measures one interval and exits; it does not refresh continuously.
+The values depend on your process and machine. The first line shows `CPU: N/A` because no previous CPU sample exists.
+Each later line calculates CPU usage from the previous and current counters. Sampling time adds to the configured sleep interval.
 
 ## Usage and development
 
@@ -64,7 +57,7 @@ Despite the word “Monitoring,” the command measures one interval and exits; 
 | `npm run typecheck` | Check TypeScript without generating files. |
 
 Rebuild after changing the source if you use `npm start`.
-Development mode watches **source files**, not changes in the inspected process. Press `Ctrl+C` to stop it.
+Development mode restarts the monitor after source changes. Both development mode and the compiled program sample continuously until stopped.
 Use `--pid <PID>` to select a process and optionally `--interval <milliseconds>` to change the sampling interval (default: `1000`).
 
 `npm test` is currently a placeholder that exits with an error. There is no automated test suite yet.
@@ -78,7 +71,7 @@ Use `--pid <PID>` to select a process and optionally `--interval <milliseconds>`
 | Virtual Memory Size | Its virtual address space (`VmSize`), not the amount of physical RAM it occupies. |
 | Resident Set Size | Its approximate resident memory (`VmRSS`). |
 | PID | The number Linux uses to identify this process. |
-| CPU | Average share of total CPU capacity across all logical CPUs during the sampling interval, rounded to one decimal place. |
+| CPU | Average share of total CPU capacity across all logical CPUs between consecutive samples, rounded to one decimal place; `N/A` on the first line. |
 | Uptime | Elapsed time since the process started, in seconds, rounded to one decimal place. |
 
 See the [Linux process status reference](https://www.man7.org/linux/man-pages/man5/proc_pid_status.5.html) for the underlying fields.
@@ -88,14 +81,15 @@ See the [Linux process status reference](https://www.man7.org/linux/man-pages/ma
 | Symptom | What to check |
 | --- | --- |
 | Missing `dist/index.js` | Run `npm run build` before `npm start`. |
-| “Insufficient arguments” or “Invalid arguments” | Use `npm start -- --pid 1234`, replacing `1234` with a live PID. |
-| “No process found” | Check the PID with `ps`. A process may exit before the program reads its details. |
-| “Permission denied” | Try a process owned by your user; system settings can restrict access to other processes. |
+| Usage message | Use `npm start -- --pid 1234`, replacing `1234` with a live PID. |
+| `Process <pid> has exited.` | The process is missing or exited during monitoring. Check the PID with `ps`. |
+| `Permission denied for <pid>.` | Try a process owned by your user; system settings can restrict access to other processes. |
 | `/proc` is unavailable | Run inside Linux with procfs mounted. |
 | Unable to read clock tick rate | Ensure `getconf CLK_TCK` succeeds and `getconf` is on `PATH`. |
 | Output does not change after editing code | Rebuild, or use `npm run dev -- --pid 1234`. |
 
 Read failures, invalid uptime values, and missing or invalid arguments exit with status 1.
+During sampling, `ENOENT` or `ESRCH` prints the process-exit message; `EACCES` prints the permission message. Other errors are rethrown.
 
 ## Where the data comes from
 
@@ -106,7 +100,7 @@ Running `cat /proc/stat` prints those contents; it does not start CPU measuremen
 | --- | --- | --- |
 | `/proc/<PID>/status` | Labelled process details. | Used by the working CLI. |
 | `/proc/<PID>/stat` | Positional process statistics, including CPU time and start time. | Used by `readProcTicks()` for CPU samples and `getProcessUptime()` for field 22. |
-| `/proc/stat` | System statistics, including CPU time across the machine. | Used by `readTotalTicks()` for both CPU samples. |
+| `/proc/stat` | System statistics, including CPU time across the machine. | Used by `readTotalTicks()` for every CPU sample. |
 | `/proc/uptime` | System uptime and accumulated idle time, in seconds. | `bootTime()` reads the first number for the process uptime calculation. |
 
 Replace `<PID>` with a process ID when reading a process-specific file.
@@ -114,7 +108,7 @@ The [kernel's procfs documentation](https://www.kernel.org/doc/html/latest/files
 
 ## How CPU measurement works
 
-The CLI uses the following calculation to measure CPU usage over an interval of about one second.
+The CLI uses the following calculation between consecutive samples, about one second apart by default.
 
 ### 1. Read the process's accumulated CPU time
 
@@ -175,7 +169,8 @@ A sample is a pair of counters read at approximately the same time:
 { proc: number, total: number }
 ```
 
-Take sample `a`, wait for an interval, then take sample `b` for the same process.
+Keep the previous sample `a`, wait for an interval, then take sample `b` for the same process.
+After printing the CPU percentage, save `b` as the previous sample for the next iteration.
 A delta means the difference between the later and earlier values.
 
 ```text
@@ -273,7 +268,7 @@ These notes describe the current implementation and its tradeoffs, rather than a
 | Choice | Practical consequence |
 | --- | --- |
 | Read Linux procfs directly using Node's built-in filesystem API. | The program uses asynchronous reads without a runtime monitoring library, but requires Linux. |
-| Inspect one PID over one sampling interval. | The CLI reports process details and interval CPU usage, then exits. |
+| Inspect one PID continuously. | The CLI prints a fresh line each interval until interrupted or the process becomes unavailable. |
 | Write strict TypeScript and compile to ESM JavaScript. | Types are checked during development; `npm start` runs the generated files in `dist/`. |
 | Keep CPU readers in a separate module. | The CLI uses exported helpers for CPU collection and percentage calculation. |
 | Report virtual memory explicitly as virtual memory. | Readers can distinguish address space from physical RAM consumption. |
