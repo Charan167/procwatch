@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { bootTime } from "./cpu.js";
 
 const ticksPerSecond = Number(
-  execFileSync("getconf", ["CLK_TCK"], { encoding: "utf8" })
+  execFileSync("getconf", ["CLK_TCK"], { encoding: "utf8" }),
 );
 
 export async function getProcessUptime(pid: number): Promise<number> {
@@ -15,7 +15,10 @@ export async function getProcessUptime(pid: number): Promise<number> {
     throw new Error("Invalid process stat file");
   }
 
-  const fields = data.slice(end + 1).trim().split(/\s+/);
+  const fields = data
+    .slice(end + 1)
+    .trim()
+    .split(/\s+/);
   const startTime = Number(fields[19]);
 
   if (!Number.isSafeInteger(startTime) || startTime < 0) {
