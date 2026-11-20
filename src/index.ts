@@ -9,6 +9,7 @@ const usage =
   "Usage: node dist/index.js --pid <process_id> [--interval <milliseconds>]";
 let pid: number;
 let interval: number;
+let timer: NodeJS.Timeout | undefined;
 
 try {
   const { values } = parseArgs({
@@ -99,7 +100,13 @@ async function pidProcessor(pid: number, interval: number) {
 async function tick() {
   await pidProcessor(pid, interval);
 
-  setTimeout(tick, interval);
+  timer = setTimeout(tick, interval);
 }
 
 tick();
+
+process.on("SIGINT", () => {
+  console.log("\nExiting...");
+  clearTimeout(timer);
+  process.exit(0);
+});
