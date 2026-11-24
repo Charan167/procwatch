@@ -2,8 +2,8 @@
 
 Inspect a Linux process from your terminal and learn how Linux reports process and CPU statistics.
 
-The CLI prints one line with a process's name, state, memory sizes, PID, CPU usage, and uptime.
-It refreshes these values continuously, sleeping about one second between samples by default. Press `Ctrl+C` to stop.
+The CLI updates one terminal line with a process's name, state, memory sizes, PID, CPU usage, and uptime.
+It waits about one second after each sample finishes before starting the next by default. Press `Ctrl+C` to stop.
 
 ## Requirements
 
@@ -40,12 +40,11 @@ Replace `1234` with a running process's PID. Run `ps -u "$USER"` to list your pr
 An illustrative output looks like this, after npm's script messages:
 
 ```text
-PID: 1234 | Name: bash | State: S (sleeping) | Virtual Memory Size: 7.81 MiB | Resident Set Size: 3.00 MiB | CPU: N/A | Uptime: 120.5 s
 PID: 1234 | Name: bash | State: S (sleeping) | Virtual Memory Size: 7.81 MiB | Resident Set Size: 3.00 MiB | CPU: 0.0% | Uptime: 121.5 s
 ```
 
-The values depend on your process and machine. The first line shows `CPU: N/A` because no previous CPU sample exists.
-Each later line calculates CPU usage from the previous and current counters. Sampling time adds to the configured sleep interval.
+The values depend on your process and machine. The first sample shows `CPU: N/A` because no previous CPU sample exists.
+Each later sample replaces the terminal line and calculates CPU usage from the previous and current counters. Sampling time adds to the configured interval.
 
 ## Usage and development
 
@@ -55,12 +54,21 @@ Each later line calculates CPU usage from the previous and current counters. Sam
 | `npm start -- --pid 1234` | Inspect a process using the compiled program. |
 | `npm run dev -- --pid 1234` | Run TypeScript directly and restart after source changes. |
 | `npm run typecheck` | Check TypeScript without generating files. |
+| `npm test` | Build and run the CLI regression tests. |
 
 Rebuild after changing the source if you use `npm start`.
 Development mode restarts the monitor after source changes. Both development mode and the compiled program sample continuously until stopped.
 Use `--pid <PID>` to select a process and optionally `--interval <milliseconds>` to change the sampling interval (default: `1000`).
 
-`npm test` is currently a placeholder that exits with an error. There is no automated test suite yet.
+Add `--json` for one JSON object per sample, suitable for piping or saving:
+
+```bash
+node dist/index.js --pid "$$" --interval 1000 --json
+```
+
+Each object contains `ts` (Unix time in milliseconds), `pid`, `cpuPct`, `rssBytes`, `vmSizeBytes`, and `uptimeSec`.
+Memory values are numeric bytes; uptime is numeric seconds. `cpuPct` is `null` for the first sample, then a numeric percentage.
+Errors go to stderr. `Ctrl+C` cancels the timer, writes a final newline, and exits with status 0 in either output mode.
 
 ### Understanding the output
 
@@ -89,7 +97,8 @@ See the [Linux process status reference](https://www.man7.org/linux/man-pages/ma
 | Output does not change after editing code | Rebuild, or use `npm run dev -- --pid 1234`. |
 
 Read failures, invalid uptime values, and missing or invalid arguments exit with status 1.
-During sampling, `ENOENT` or `ESRCH` prints the process-exit message; `EACCES` prints the permission message. Other errors are rethrown.
+During procfs reads, `ENOENT` or `ESRCH` prints the process-exit message; `EACCES` prints the permission message.
+Other errors are logged to stderr and exit with status 1.
 
 ## Where the data comes from
 
@@ -268,7 +277,7 @@ These notes describe the current implementation and its tradeoffs, rather than a
 | Choice | Practical consequence |
 | --- | --- |
 | Read Linux procfs directly using Node's built-in filesystem API. | The program uses asynchronous reads without a runtime monitoring library, but requires Linux. |
-| Inspect one PID continuously. | The CLI prints a fresh line each interval until interrupted or the process becomes unavailable. |
+| Inspect one PID continuously. | The CLI updates one terminal line, or prints one JSON object per sample with `--json`, until interrupted or the process becomes unavailable. |
 | Write strict TypeScript and compile to ESM JavaScript. | Types are checked during development; `npm start` runs the generated files in `dist/`. |
 | Keep CPU readers in a separate module. | The CLI uses exported helpers for CPU collection and percentage calculation. |
 | Report virtual memory explicitly as virtual memory. | Readers can distinguish address space from physical RAM consumption. |
@@ -305,7 +314,7 @@ That makes the percentage calculation easy to check with fixed sample values wit
 ## Project layout
 
 ```text
-src/index.ts   CLI arguments, process status read, CPU sampling, and text output
+src/index.ts   CLI arguments, process status read, CPU sampling, and terminal/JSON output
 src/cpu.ts     CPU-reading helpers, system uptime reader, and percentage calculation
 src/process.ts Process uptime calculation using procfs and the system clock-tick rate
 dist/          Generated build output

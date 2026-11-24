@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { bootTime } from "./cpu.js";
 
-const ticksPerSecond = Number(
-  execFileSync("getconf", ["CLK_TCK"], { encoding: "utf8" }),
-);
+let ticksPerSecond: number | undefined;
 
 export async function getProcessUptime(pid: number): Promise<number> {
+  ticksPerSecond ??= Number(
+    execFileSync("getconf", ["CLK_TCK"], { encoding: "utf8" }),
+  );
   const data = await readFile(`/proc/${pid}/stat`, "utf8");
 
   const end = data.lastIndexOf(")");
