@@ -1,16 +1,19 @@
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 import { readProcTicks, readTotalTicks, cpuPercent } from "./cpu.js";
 import { formatBytes } from "./memory.js";
 import { getProcessUptime } from "./process.js";
 
 const usage =
-  "Usage: node dist/index.js --pid <process_id> [--interval <milliseconds>] [--json]";
+  "Usage: node dist/index.js --pid <process_id> [--interval <milliseconds>] [--json] [--count <n>]";
 let pid: number;
 let interval: number;
 let json: boolean;
 let timer: NodeJS.Timeout | undefined;
 let previous: { proc: number; total: number } | undefined;
+let count: number | undefined;
+let samples = 0;
 
 try {
   const { values } = parseArgs({
@@ -18,19 +21,21 @@ try {
       pid: { type: "string" },
       interval: { type: "string", default: "1000" },
       json: { type: "boolean" },
+      count: { type: "string" },
     },
   });
 
   pid = Number(values.pid);
   interval = Number(values.interval);
   json = values.json ?? false;
-
+  count = values.count === undefined ? undefined : Number(values.count);
   if (
     !Number.isSafeInteger(pid) ||
     pid <= 0 ||
     !Number.isSafeInteger(interval) ||
     interval <= 0 ||
-    interval > 2_147_483_647
+    interval > 2_147_483_647 ||
+    (count !== undefined && (!Number.isSafeInteger(count) || count <= 0))
   ) {
     console.error(usage);
     process.exit(1);
@@ -94,6 +99,17 @@ async function sampleAndPrint() {
 async function tick() {
   try {
     await sampleAndPrint();
+    samples++;
+
+    if (count !== undefined && samples >= count) {
+      const actual = performance.now() - t0;
+      const drift = actual - count * interval;
+
+      if (!json) process.stdout.write("\n");
+      console.error(`drift: ${drift} ms`);
+      return;
+    }
+
     timer = setTimeout(tick, interval);
   } catch (error) {
     if (
@@ -117,7 +133,13 @@ async function tick() {
   }
 }
 
-tick();
+const t0 = performance.now();
+
+if (count === undefined) {
+  tick();
+} else {
+  timer = setTimeout(tick, interval);
+}
 
 process.on("SIGINT", () => {
   clearTimeout(timer);
